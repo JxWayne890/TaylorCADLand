@@ -1,0 +1,12 @@
+services:
+  - type: background          # one-off/cron job, not a web server
+    name: taylor-parcel-parser
+    runtime: python
+    plan: free                # stays on Render’s free tier
+
+    buildCommand: |
+      pip install -r python/requirements.txt
+
+    startCommand: |
+      python python/taylor_parcel_parser.py \
+        TaylorCAD_2025_Preliminary_Appr_Roll_All_Prop_Types_02Jun25.zip
