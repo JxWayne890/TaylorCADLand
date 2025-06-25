@@ -1,73 +1,51 @@
 name: Extract ≥10-acre parcels
 
-# ───────────────────────────────────────────────────────────────
-# Triggers
-#   • Manual run (workflow_dispatch)
-#   • Weekly cron – Monday 06:00 a.m. CST  (11:00 UTC)
-# ───────────────────────────────────────────────────────────────
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 11 * * 1'     # Remove this block if you don’t want auto-refresh
+    - cron: '0 11 * * 1'        # weekly Monday 06:00 CST
 
 jobs:
   parse:
     runs-on: ubuntu-latest
-
     steps:
-    # 1) Checkout repo (needed for the parser script)
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    # 2) Python env
-    - uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-    # 3) Install pandas + tqdm
-    - name: Install deps
-      run: pip install -r python/requirements.txt
+      - name: Install deps
+        run: pip install -r python/requirements.txt
 
-    # 4) Discover the latest Preliminary Roll ZIP link dynamically
-    - name: Find latest Preliminary Roll URL
-      id: findzip
-      run: |
-        PAGE="https://taylor-cad.org/data-downloads/"
-        # Look for any href containing “Preliminary ... All Property Types” and ending in .zip
-        REL=$(curl -sSL "$PAGE" \
-              | grep -Eo 'href="[^"]*Preliminary[^"]*All_Property_Types[^"]*\.zip"' \
-              | head -n1 \
-              | cut -d'"' -f2)
+      # ── NEW, broader regex ───────────────────────────────────────
+      - name: Find latest Preliminary Roll URL
+        id: findzip
+        run: |
+          PAGE="https://taylor-cad.org/data-downloads/"
+          HTML=$(curl -sSL "$PAGE")
+          REL=$(echo "$HTML" \
+                | grep -Eo 'href="[^"]*Preliminary[^"]*\.zip"' \
+                | head -n1 \
+                | cut -d'"' -f2)
+          if [[ -z "$REL" ]]; then
+            echo "::error::Could not locate ZIP link on page"
+            exit 1
+          fi
+          [[ "$REL" == http* ]] && ZIP_URL="$REL" || ZIP_URL="https://taylor-cad.org$REL"
+          echo "ZIP_URL=$ZIP_URL"
+          echo "zip_url=$ZIP_URL" >> "$GITHUB_OUTPUT"
 
-        if [[ -z "$REL" ]]; then
-          echo "::error::Could not locate ZIP URL on data-downloads page"
-          exit 1
-        fi
+      - name: Download roll.zip
+        run: curl -L -o roll.zip "${{ steps.findzip.outputs.zip_url }}"
 
-        # Prepend domain if the href is relative
-        if [[ "$REL" == http* ]]; then
-          ZIP_URL="$REL"
-        else
-          ZIP_URL="https://taylor-cad.org$REL"
-        fi
+      - name: Verify ZIP integrity
+        run: unzip -tqq roll.zip
 
-        echo "Found ZIP_URL=$ZIP_URL"
-        echo "zip_url=$ZIP_URL" >> "$GITHUB_OUTPUT"
+      - name: Run parser
+        run: python python/taylor_parcel_parser.py roll.zip
 
-    # 5) Download the ZIP to roll.zip
-    - name: Download roll.zip
-      run: |
-        curl -L -o roll.zip "${{ steps.findzip.outputs.zip_url }}"
-
-    # (Optional) quick integrity check
-    - name: Verify ZIP integrity
-      run: unzip -tqq roll.zip
-
-    # 6) Run the parcel parser
-    - name: Run parser
-      run: python python/taylor_parcel_parser.py roll.zip
-
-    # 7) Upload resulting CSV as CI artifact
-    - uses: actions/upload-artifact@v4
-      with:
-        name: taylor-10plus-acres
-        path: taylor_10plus_acres.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: taylor-10plus-acres
+          path: taylor_10plus_acres.csv
