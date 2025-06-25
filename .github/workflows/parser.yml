@@ -1,0 +1,42 @@
+name: Extract ≥10-acre parcels
+
+# • Runs every Monday 06:00 a.m. CST  (11:00 UTC)
+# • Can also be triggered manually from the Actions tab
+on:
+  workflow_dispatch:
+  schedule:
+    - cron:  '0 11 * * 1'   # GitHub cron is UTC
+
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+
+    steps:
+      # --- checkout code (required even if we just need the script) ---
+      - uses: actions/checkout@v4
+
+      # --- Python 3.11 environment ---
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # --- install deps from requirements.txt ---
+      - name: Install Python packages
+        run: pip install -r python/requirements.txt
+
+      # --- fetch the appraisal-roll ZIP each run ---
+      - name: Download Taylor CAD 2025 roll
+        run: |
+          curl -L -o roll.zip \
+            "https://www.taylor-cad.org/Files/Downloads/TaylorCAD_2025_Preliminary_Appr_Roll_All_Prop_Types_02Jun25.zip"
+
+      # --- run the parser script you added earlier ---
+      - name: Run parcel parser
+        run: |
+          python python/taylor_parcel_parser.py roll.zip
+
+      # --- expose the CSV as a downloadable artifact ---
+      - uses: actions/upload-artifact@v4
+        with:
+          name: taylor-10plus-acres
+          path: taylor_10plus_acres.csv
