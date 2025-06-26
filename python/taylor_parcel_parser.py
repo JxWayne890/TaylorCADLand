@@ -1,14 +1,14 @@
 """
-Taylor CAD ≥10-acre parcel extractor (regex version)
+Taylor CAD ≥10‑acre parcel extractor (regex version)
 ────────────────────────────────────────────────────
 Why we changed it again
 ----------------------
-The LAND-DETAIL file *does* follow the PTAD layout, but the exact positions
-shifted because the county’s Land-Description field isn’t always 25 chars.
-Rather than hard-code offsets yet again, this version extracts acreage with
-an easy, bullet-proof regex:
+The LAND‑DETAIL file *does* follow the PTAD layout, but the exact positions
+shifted because the county’s Land‑Description field isn’t always 25 chars.
+Rather than hard‑code offsets yet again, this version extracts acreage with
+an easy, bullet‑proof regex:
 
-    size indicator  = one upper-case letter (F, S, A …)
+    size indicator  = one upper‑case letter (F, S, A …)
     size amount     = 12 consecutive digits right after the indicator
 
 Regex:  r"([A-Z])([0-9]{12})"
@@ -26,7 +26,7 @@ from tqdm import tqdm
 
 WIDTHS_INFO = [12,1,4,35,35,35,35,9]
 COLS_INFO   = ["acct","pt","yr","owner1","owner2","mail1","mail2","zip"]
-SIZE_REGEX  = re.compile(r"([A-Z])([0-9]{12})")  # indicator + 12-digit size amt
+SIZE_REGEX  = re.compile(r"([A-Z])([0-9]{12})")  # indicator + 12‑digit size amt
 
 ACRE_MIN = 10.0
 
