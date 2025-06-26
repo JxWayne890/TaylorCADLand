@@ -1,40 +1,36 @@
 """
-Taylor CAD ≥10-acre parcel extractor  – June 2025
-──────────────────────────────────────────────────
-This version reads the LAND-DETAIL file using the **official PTAD layout**
-so acreage is parsed correctly.
+Taylor CAD ≥10-acre parcel extractor (regex version)
+────────────────────────────────────────────────────
+Why we changed it again
+----------------------
+The LAND-DETAIL file *does* follow the PTAD layout, but the exact positions
+shifted because the county’s Land-Description field isn’t always 25 chars.
+Rather than hard-code offsets yet again, this version extracts acreage with
+an easy, bullet-proof regex:
 
-Key PTAD columns we need
-────────────────────────
-Offset  Width  Field
-0-11    12     Account Number (key used across all tables)
-63      1      Size Indicator   (F = acres, S = square-feet, etc.)
-64-75   12     Size Amount      (implied 2 decimals for acres)
+    size indicator  = one upper-case letter (F, S, A …)
+    size amount     = 12 consecutive digits right after the indicator
 
-We divide the 12-digit SizeAmount by 100 to get fractional acres.
-Only SizeIndicator == "F" rows are kept; others are ignored.
+Regex:  r"([A-Z])([0-9]{12})"
 
-The script merges those land rows with APPRAISAL_INFO to
-produce a CSV of every parcel ≥ 10 acres with owner & mailing address.
+If the indicator == "F" (acres) we convert `amount / 100` and keep the row
+when acres ≥ 10.
 
-Usage (local test):
-    python python/taylor_parcel_parser.py roll.zip
-
-Dependencies:
-    pandas  (for APPRAISAL_INFO join)
-    tqdm    (optional nice progress bar)
+This makes the parser robust even if the county tweaks column widths next
+roll.
 """
-
-import sys, zipfile, csv
+import sys, zipfile, re
 from pathlib import Path
 import pandas as pd
 from tqdm import tqdm
 
-# ---------------------------------------------------------------------------
-# Helper – read APPRAISAL_INFO into DataFrame (fixed-width spec)
-# ---------------------------------------------------------------------------
-WIDTHS_INFO = [12,1,4,35,35,35,35,9]  # acct, pt, yr, owner1, owner2, mail1, mail2, zip
+WIDTHS_INFO = [12,1,4,35,35,35,35,9]
 COLS_INFO   = ["acct","pt","yr","owner1","owner2","mail1","mail2","zip"]
+SIZE_REGEX  = re.compile(r"([A-Z])([0-9]{12})")  # indicator + 12-digit size amt
+
+ACRE_MIN = 10.0
+
+# ---------------------------------------------------------------------------
 
 def read_info_df(zip_path: Path):
     with zipfile.ZipFile(zip_path) as zf:
@@ -43,69 +39,47 @@ def read_info_df(zip_path: Path):
             return pd.read_fwf(fh, widths=WIDTHS_INFO, names=COLS_INFO, dtype=str)
 
 # ---------------------------------------------------------------------------
-# Main: extract ≥10-acre parcels
-# ---------------------------------------------------------------------------
-
-ACRE_MIN = 10.0
-
 
 def extract_large_parcels(zip_path: Path) -> pd.DataFrame:
     info = read_info_df(zip_path)
-    print(f"▶ Loaded {len(info):,} property headers")
-
-    large_rows = []
+    rows = []
 
     with zipfile.ZipFile(zip_path) as zf:
-        land_name = next(m for m in zf.namelist() if "LAND_DETAIL" in m.upper())
-        with zf.open(land_name) as fh:
-            for raw in tqdm(fh, desc="Scanning LAND_DETAIL", unit="row"):
+        member = next(m for m in zf.namelist() if "LAND_DETAIL" in m.upper())
+        with zf.open(member) as fh:
+            for raw in tqdm(fh, desc="LAND_DETAIL", unit="row"):
                 line = raw.decode("ascii", errors="ignore")
-                if len(line) < 76:
+                m = SIZE_REGEX.search(line)
+                if not m:
                     continue
-                size_ind  = line[63]
-                size_amt  = line[64:76]
-                if size_ind != "F":
-                    continue  # skip sqft or other units
-                try:
-                    acres = int(size_amt) / 100  # implied 2 decimals
-                except ValueError:
-                    continue
+                ind, amt_str = m.groups()
+                if ind != "F":
+                    continue  # we only want acreage rows
+                acres = int(amt_str) / 100  # implied 2 decimals
                 if acres < ACRE_MIN:
                     continue
-                acct = line[0:12]
-                large_rows.append((acct.strip(), acres))
+                acct = line[0:12].strip()
+                rows.append((acct, acres))
 
-    print(f"▶ Found {len(large_rows):,} parcels ≥ {ACRE_MIN} acres")
-
-    # Build DataFrame and join to owner info
-    df_land = pd.DataFrame(large_rows, columns=["acct","acres"])
+    df_land = pd.DataFrame(rows, columns=["acct","acres"])
     merged  = df_land.merge(info, on="acct", how="left")
-
-    # tidy columns
-    out = merged[[
-        "owner1","owner2","mail1","mail2","zip","acres","acct"
-    ]].rename(columns={
-        "owner1":"OwnerName",
-        "owner2":"CoOwner",
-        "mail1":"MailAddr1",
-        "mail2":"MailAddr2",
-        "zip":"Zip",
-        "acres":"Acreage",
-        "acct":"Account"
-    })
-
-    return out
+    return merged[["owner1","owner2","mail1","mail2","zip","acres","acct"]] \
+                  .rename(columns={
+                      "owner1":"OwnerName",
+                      "owner2":"CoOwner",
+                      "mail1":"MailAddr1",
+                      "mail2":"MailAddr2",
+                      "zip":"Zip",
+                      "acres":"Acreage",
+                      "acct":"Account"
+                  })
 
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.exit("Usage: python taylor_parcel_parser.py <roll.zip>")
-
-    zip_file = Path(sys.argv[1]).expanduser().resolve()
-    if not zip_file.exists():
-        sys.exit(f"Zip not found: {zip_file}")
-
-    df = extract_large_parcels(zip_file)
-    out_csv = zip_file.with_name("taylor_10plus_acres.csv")
-    df.to_csv(out_csv, index=False)
-    print(f"✅ Saved {len(df):,} rows to {out_csv}")
+    z = Path(sys.argv[1]).resolve()
+    df = extract_large_parcels(z)
+    out = z.with_name("taylor_10plus_acres.csv")
+    df.to_csv(out, index=False)
+    print(f"Saved {len(df):,} rows → {out}")
